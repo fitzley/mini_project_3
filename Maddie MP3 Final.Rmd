@@ -1,0 +1,336 @@
+---
+title: "Traffic-Related Environmental Risk and Diabetes Prevalence Across Chicago Communities"
+author: "Maddie Casagrande"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(tidyverse)
+library(plotly)
+library(broom)
+library(DT)
+library(ggrepel)
+library(scales)
+```
+
+```{css, echo=FALSE}
+body {
+  font-family: "Times New Roman", Times, serif;
+  color: black;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Times New Roman", Times, serif;
+  color: black;
+}
+
+p, li, table, th, td, div {
+  font-family: "Times New Roman", Times, serif;
+  color: black;
+}
+
+a {
+  color: black;
+}
+
+.tocify, .tocify-item, .tocify-subheader {
+  color: black;
+}
+
+.plotly, .html-widget {
+  font-family: "Times New Roman", Times, serif;
+}
+```
+
+### Introduction
+
+Diabetes prevalence varies across Chicago community areas, suggesting that health outcomes are not evenly distributed across space. In Mini Project 2, I examined diabetes as one of the major biological health outcomes used to compare neighborhood levels of disease burden. For Mini Project 3, I will examine whether environmental exposure variables (PM2.5, traffic risk, environmental justice burden) help explain these diabetes patterns. The goal of this analysis is not to argue that environmental exposure directly causes diabetes occurence. Instead, this analysis treats the environmental exposure variables listed above as indicators that may align with broader patterns of health vulnerabilities and inequities. 
+
+**1. Research Question:**
+
+How well do environmental exposure variables (PM2.5, traffic risk, environmental justice burden) align with diabetes prevalence across Chicago community areas?
+
+**2. Hypothesis:**
+
+I expect community areas with higher environmental exposure to show higher diabetes prevalence, but I expect the relationship to be imperfect as diabetes occurence is influenced by many social, economic, and political factors beyond environmental exposure alone. 
+
+### Methods
+
+The analysis used two datasets from our group GitHub repository. The Open Air Chicago dataset from Mini Project 1 provided city-level environmental variables across Chicago, while the Chicago Health Atlas dataset from Mini Project 2 provided neighborhood-level environmental variables and diabetes prevalence across Chicago communities. Since the Open Air Chicago data are measured at the sensor/day level, while diabetes prevalence is reported at the community-area level, the datasets do not scale 1:1. 
+
+In order to make the comparison meaningful at the neighborhood level, this analysis uses traffic-related environmental risk ('TRF_2020') from the shared health dataset as the main environmental predictor. Diabetes prevalence ('HCSDIA_2023.2024') was used as the biological health outcome, and represents the percent of adults with diabetes.
+
+The analysis first summarizes the Open Air Chicago dataset to establish environmental context. Then, traffic risk and diabetes prevalence are compared using a scatterplot, correlation test, and linear regression model. Finally, I will calculate an additional mismatch index similar to that in Mini Project 2 by subtracting predicted diabetes prevalence from observed diabetes prevalence. Positive mismatch values indicate communities with higher diabetes prevalence than expected based on traffic risk, and negative values indicate communities with lower diabetes prevalence than expected. 
+
+```{r load-clean-data}
+# Load in Open Air Chicago dataset:
+air_url <- "https://raw.githubusercontent.com/fitzley/miniproj2/main/Open_Air_Chicago_Day_Aggregations_20260212(1)%20(3).csv"
+air <- read.csv(air_url)
+
+# Load in Chicago Health Atlas dataset:
+health_url <- "https://raw.githubusercontent.com/fitzley/miniproj2/main/health_data.csv"
+health_data2 <- read.csv(health_url)
+```
+
+```{r inspect-data}
+# colnames(air)
+# colnames(health_data2)
+```
+
+### Results
+
+#### Result 1: Environmental Context
+
+The Open Air Chicago dataset was used to establish environmental context for this analysis. Because this dataset is organized by sensor/day rather than community area, it was summarized independently before connecting the analysis to the community-level Chicago Health Atlas dataset.
+
+```{r mp1-summary}
+air_summary <- air %>%
+  summarize(
+    n_observations = n(), 
+    n_sensors = n_distinct(sensor_name),
+    mean_pm25 = mean(pm2_5ConcMass24HourMean.value, na.rm = TRUE),
+    min_pm25 = min(pm2_5ConcMass24HourMean.value, na.rm = TRUE),
+    max_pm25 = max(pm2_5ConcMass24HourMean.value, na.rm = TRUE)
+  )
+
+DT::datatable(air_summary)
+```
+
+#### Result 2: Prepare Diabetes and Traffic Data
+
+```{r clean-diabetes-traffic}
+diabetes_traffic <- health_data2 %>%
+  filter(
+    !is.na(TRF_2020),
+    !is.na(HCSDIA_2023.2024),
+    !is.na(Population)
+  ) %>%
+  mutate(
+    traffic_risk = TRF_2020,
+    diabetes_count = HCSDIA_2023.2024,
+    diabetes_prevalence = (diabetes_count/Population) * 100
+  )
+```
+
+```{r diabetes-data-check}
+diabetes_traffic %>%
+  select(Name, traffic_risk, diabetes_prevalence) %>%
+  head()
+summary(diabetes_traffic %>%
+          select(traffic_risk, diabetes_prevalence))
+```
+
+The diabetes and traffic-risk data are already reported at the community-area scale, making them directly comparable. Diabetes prevalence is not converted using population because 'HCSDIA_2023.2024' already represents the percent of adults with diabetes. 
+
+#### Result 3: Traffic Risk vs. Diabetes Prevalence
+```{r traffic-diabetes-plot}
+p1 <- ggplot(diabetes_traffic, aes(
+  x = traffic_risk,
+  y = diabetes_prevalence,
+  text = paste(
+    "Community:", Name,
+    "<br>Traffic Risk:", round(traffic_risk, 2),
+    "<br>Diabetes Count:", diabetes_count,
+    "<br>Diabetes Prevalence:", round(diabetes_prevalence, 2), "%"
+  )
+)) +
+  geom_point(color = "#C77DFF", size = 3, alpha = 0.75) + 
+  geom_smooth(
+    aes(x = traffic_risk, y = diabetes_prevalence),
+    method = "lm", color = "#7B2CBF", se = TRUE, inherit.aes = FALSE) +
+  scale_x_log10() +
+  scale_y_continuous(labels = function(x) paste0(round(x, 1), "%")) +
+  labs(
+    title = "Traffic Risk and Diabetes Prevalence",
+    subtitle = "Testing whether traffic-related environmental burden aligns with diabetes patterns",
+    x = "Traffic Risk (log scale)",
+    y = "Diabetes Prevalence (% Adults)"
+  ) +
+  theme_minimal(base_family = "Times New Roman")+
+theme(
+  plot.title = element_text(color = "black"),
+  plot.subtitle = element_text(color = "black"),
+  axis.title = element_text(color = "black"),
+  axis.text = element_text(color = "black"),
+  legend.title = element_text(color = "black"),
+  legend.text = element_text(color = "black")
+)
+
+ggplotly(p1, tooltip = "text")
+```
+
+#### Result 4: Correlation Test
+```{r correlation-test}
+traffic_cor <- cor.test(
+  diabetes_traffic$traffic_risk,
+  diabetes_traffic$diabetes_prevalence
+)
+
+cor_table <- tibble(
+  relationship = "Traffic Risk vs Diabetes Prevalence",
+  correlation = round(as.numeric(traffic_cor$estimate), 3),
+  p_value = round(traffic_cor$p.value, 4)
+)
+
+DT::datatable(cor_table)
+```
+
+#### Result 5: Regression Model
+```{r regression-model}
+traffic_model <- lm(
+  diabetes_prevalence ~ traffic_risk,
+  data = diabetes_traffic
+)
+
+model_results <- tidy(traffic_model, conf.int = TRUE)
+
+DT::datatable(
+  model_results,
+  caption = "Regression Model Predicting Diabetes Prevalence from Traffic Risk",
+  options = list(pagelength = 5)
+)
+
+glance(traffic_model)
+```
+
+#### Result 6: Diabetes Mismatch Index
+```{r mismatch-index}
+diabetes_traffic <- diabetes_traffic %>%
+  mutate(
+    expected_diabetes = predict(traffic_model, newdata = diabetes_traffic),
+    diabetes_mismatch = diabetes_prevalence - expected_diabetes,
+    mismatch_category = case_when(
+      diabetes_mismatch > 0 ~ "Higher diabetes than expected",
+      diabetes_mismatch < 0 ~ "Lower diabetes than expected",
+      TRUE ~ "About as expected"
+    ),
+    hover_text = paste(
+      "Community:", Name,
+      "<br>Traffic Risk:", round(traffic_risk, 2),
+      "<br>Observed Diabetes:", round(diabetes_prevalence, 2), "%",
+      "<br>Expected Diabetes:", round(expected_diabetes, 2), "%",
+      "<br>Mismatch:", round(diabetes_mismatch, 2),
+      "<br>Category:", mismatch_category
+    )
+  )
+```
+
+```{r mismatch-plot}
+p2 <- ggplot(diabetes_traffic, aes(
+  x = expected_diabetes,
+  y = diabetes_prevalence,
+  color = diabetes_mismatch,
+  text = hover_text
+)) +
+  geom_point(size = 4, alpha = 0.85) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray40") +
+  scale_color_gradient2(
+    low = "#FF4FA3",
+    mid = "#C77DFF",
+    high = "#3A0CA3",
+    midpoint = 0,
+    name = "Mismatch"
+  ) +
+  labs(
+    title = "Diabetes Mismatch Index",
+    subtitle = "Observed diabetes compared with diabetes predicted from traffic risk",
+    x = "Expected Diabetes Prevalence (%)",
+    y = "Observed Diabetes Prevalence (%)"
+  ) +
+  theme_minimal(base_family = "Times New Roman") +
+theme(
+  plot.title = element_text(color = "black"),
+  plot.subtitle = element_text(color = "black"),
+  axis.title = element_text(color = "black"),
+  axis.text = element_text(color = "black"),
+  legend.title = element_text(color = "black"),
+  legend.text = element_text(color = "black")
+)
+
+ggplotly(p2, tooltip = "text")
+```
+
+#### Result 7
+```{r strongest-mismatch}
+mismatch_ranked <- diabetes_traffic %>%
+  arrange(desc(abs(diabetes_mismatch))) %>%
+  mutate(Name = factor(Name, levels = Name))
+
+p3 <- ggplot(mismatch_ranked, aes(
+  x = diabetes_mismatch,
+  y = Name,
+  fill = mismatch_category,
+  text = hover_text
+)) +
+  geom_col(width = 0.55) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  scale_fill_manual(values = c(
+    "Higher diabetes than expected" = "#3A0CA3",
+    "Lower diabetes than expected" = "#FF4FA3",
+    "About as expected" = "gray70"
+  )) +
+  labs(
+    title = "Communities With the Strongest Diabetes Mismatch",
+    subtitle = "Positive values indicate higher diabetes than predicted by traffic risk",
+    x = "Diabetes Mismatch",
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal(base_family = "Times New Roman") +
+ theme(
+  plot.title = element_text(color = "black"),
+  plot.subtitle = element_text(color = "black"),
+  axis.title = element_text(color = "black"),
+  axis.text = element_text(color = "black"),
+  legend.title = element_text(color = "black"),
+  legend.text = element_text(color = "black")
+)
+    axis.text.y = element_text(size = 8)
+    legend.position = "bottom"
+  
+ggplotly(p3, tooltip = "text")
+```
+
+### Analysis/Discussion
+
+The first plot, which compared traffic-related risk with diabetes prevalence, showed a weak and inconsistent relationship across Chicago community areas. Although the original expectation was that higher traffic risk would align with higher diabetes prevalence, the scatterplot did not show an upward trend. Instead, communities were widely dispersed, meaning that similar levels of traffic risk could be associated with very different diabetes prevalence values. This indicates that traffic risk alone does not fully explain diabetes patterns at the community-area scale.
+
+The linear regression model supported the same interpretation. Traffic risk was not a statistically significant predictor of diabetes prevalence, with a very small, slightly negative coefficient (-0.064) and a p-value of 0.587. This means that the model did not provide strong evidence that increasing traffic risk was associated with increasing diabetes prevalence. Because the effect size was close to zero, the relationship appears weak both in a statistical and practical sense. This result helps avoid a false positive: instead of overestimating the relationship, the model shows that traffic risk by itself does not meaningfully explain the observed variation in diabetes prevalence.
+
+The diabetes mismatch index added more depth to the analysis by showing where observed diabetes prevalence differed from what would be expected based on traffic risk. Communities with positive mismatch values had higher diabetes prevalence than predicted, while communities with negative mismatch values had lower diabetes prevalence than predicted. This is the strongest part of the analysis because it moves from asking whether traffic risk predicts diabetes overall, and instead examines where the expected relationship breaks down. In communities with higher-than-expected diabetes, other neighborhood-level, other neighborhood-level factors may be contributing to diabetes burdens. In communities with lower-than-expected diabetes, traffic risk may be less connected to diabetes outcomes, or other protective factors may be present. 
+
+The strongest mismatch community plot further highlighted that the traffic-diabetes relationship is uneven across Chicago. Some communities showed much higher diabetes prevalence than expected, while others showed lower diabetes prevalence than expected. These deviations suggest that diabetes prevalence is shaped by more than one environmental factor. While traffic risk still provides useful environmental context, it does not capture the full range of conditions influencing diabetes patterns. Factors such as accessibility to food and healthcare, income, age structure, neighborhood resources, and broader inequalities may help explain why some communities deviate strongly from the prediction.
+
+Overall, the results suggest that traffic-related environmental risk and diabetes prevalence do not strongly align in a simple linear way. However, this does not mean that the comparison is meaningless. It shows that the relationship between environmental exposure and biological health is complex. The mismatch index is especially valuable as it identifies the communities where the relationship does not hold. Rather than focusing on a causal relationship, this analysis shows that traffic risk alone is not enough to explain diabetes prevalence, and that the integration of additional neighborhood-level variables would be useful to better understand these patterns.
+
+### Limitations
+
+One limitation of this analysis is the scale mismatch. The Open Air Chicago dataset from Mini Project 1 is measured at the sensor/day level, while the Chicago Health Atlas dataset from Mini Project 2 is reported at the community-area level. Because of this, the Open Air Chicago dataset is used as a means to establish environmental context, while the 'TRF_2020' variable from the Chicago Health Atlas dataset is used as a community-level environmental predictor for the diabetes analysis.  
+
+A second limitation is the time mismatch. Traffic risk is from 2020, while diabetes prevalence is from 2023-2024. Because these variables were not measured during the exact same period, the results should be interpreted as explanatory spatial associations.
+
+One final limitation, perhaps the most important, is that traffic risk only represents one environmental variable. Diabetes prevalence is largely influenced by many socioeconomic and political factors that cannot be captured by the traffic risk variable.  
+
+### Conclusions
+ 
+Overall, this analysis shows that traffic-related environmental risk alone does not strongly explain diabetes prevalence across Chicago communities. The scatterplot and regression model suggest that the relationship is weak and not statistically significant, meaning that higher traffic risk does not consistently predict diabetes prevalence.
+
+However, the mismatch index strengthens the analysis by showing exactly where the expected relationship breaks down. Some communities have higher prevalence based on risk, while others experience the opposite. This supports the idea that environmental and biological datasets can be comparable, but their relationships cannot be fully explained by one variable.
+
+### References
+
+McAlexander, T. P., Ryan, V., Uddin, J., Kanchi, R., Thorpe, L., Schwartz, B. S., Carson, A., Rolka, D. B., Adhikari, S., Pollak, J., Lopez, P., Smith, M., Meeker, M., & McClure, L. A. (2023). Associations between PM2.5 and O3 exposures and new onset type 2 diabetes in regional and national samples in the United States. *Environmental Research, 239*, 1-9. https://doi.org/10.1016/j.envres.2023.117248
+
+Montressor-López, J. A., Reading, S. R., Yanosky, J. D., Mittleman, M. A., Bell, R. A., Crume, T. L., Dabelea, D., Dolan, L., D'Agostino Jr., R. B., Marcovina, S. M., Pihoker, C., Reynolds, K., Urbina, E., Liese, A. D., Quirós-Alcalá, L., Smith, J. C., de Mesquita, P. J. B., & Puett, R.C. (2021). The relationship between traffic-related air pollution exposures and allostatic load among young with type 1 diabetes in the SEARCH cohort. *Environmental Research, 197*, 1-7. https://doi.org/10.1016/j.envres.2021.111075
+
+### Session Info
+
+```{r}
+sessionInfo()
+```
