@@ -1,0 +1,463 @@
+---
+title: "Mini Project 3: Environmental and Biological Relationships in Chicago"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+    code_folding: hide
+---
+
+#**Group Intro**
+# *Introduction*
+
+Urban environmental conditions are rarely distributed equally across cities in the United States. In Chicago, air pollution exposure can vary substantially between neighborhoods due to traffic density, industrial infrastructure, and population density. At the same time, biological and social indicators such as poverty, chronic illness, and health vulnerability are also unevenly distributed across census tracts.
+
+This project combines two independent data sets, environmental sensor data and Chicago Health Atlas biological indicators, to investigate whether these patterns overlap in a meaningful way. Rather than simply searching for correlation, the purpose of this analysis is to determine whether the observed relationship reflects a realistic ecological pattern connected to how communities experience environmental stressors.
+
+A major challenge in this project is that the data sets operate at different scales and timelines. The environmental data set contains long-term sensor observations collected continuously over time, while the Chicago Health Atlas provides tract-level snapshot indicators collected during a different period. Because of this mismatch, the analysis focuses on creating standardized summary measurements that allow the data sets to be compared responsibly.
+
+# **The central research question guiding this project is:**
+
+**Do Chicago neighborhoods with higher socioeconomic vulnerability also experience greater exposure to air pollution?**
+
+
+To answer this question, this analyses focuses on the relationship between:
+
+Average black carbon concentrations (environmental burden)
+Poverty rate by census tract (biological and social vulnerability)
+
+This relationship was chosen because it reflects a biologically and ecologically meaningful urban pattern. Black carbon pollution is commonly associated with vehicle emissions and combustion sources, while poverty can influence housing location, environmental exposure, healthcare access, and long-term health vulnerability. If both variables cluster together spatially, the relationship may suggest broader environmental inequality patterns rather than random coincidence.
+
+# **Purpose of the Project**
+
+The purpose of this project is not only to identify a statistical relationship, but also to evaluate whether the relationship:
+
+- Reflects realistic neighborhood-level conditions
+- Remains consistent across multiple visualizations
+- Demonstrates ecological credibility
+- Avoids misleading conclusions caused by unrelated variables.
+
+
+# **Main Goal**
+
+**The goals of this project was to:**
+
+- Identify relationships between environmental and biological variables
+- Determine whether the relationship is statistically meaningful
+- Show that the relationship makes ecological and biological sense
+- Avoid false positives or misleading associations
+
+
+
+
+
+```{r load-library}
+#Note: Data manipulation
+library(tidyverse)
+library(lubridate)
+
+#Note: Interactive plots
+library(plotly)
+library(leaflet)
+
+#Note: Mapping
+library(sf)
+library(tmap)
+
+#Note: Statistical tools
+library(corrplot)
+library(broom)
+
+#Note: Sunset color palette
+sunset_colors <- c(
+  "#C21807",  #Note: cherry red
+  "#FF5E78",  #Note: pink
+  "#FFA600",  #Note: orange
+  "#FFD166"   #Note: yellow
+)
+```
+
+
+```{r load-data}
+#Note: Environmental data
+env_data <- read.csv("Open_Air_Chicago_Day_Aggregations_20260212(1) (1).csv")
+
+#Note: Biological health data
+bio_data <- read.csv("Chicago Health Atlas Data Download - Census Tracts (2).csv")
+```
+
+
+```{r inspect-data}
+#Note: View structure of data sets
+str(env_data)
+str(bio_data)
+
+#Note: View column names
+colnames(env_data)
+colnames(bio_data)
+```
+
+
+```{r clean-data-environmental}
+
+#Note: The environmental dataset contains repeated daily observations collected by air quality sensors across Chicago. Before analysis, the data must be simplified and standardized.
+
+#Note:Goals of cleaning:
+
+#Note:Keep only variables relevant to this project
+#Note:Remove incomplete observations
+#Note:Create neighborhood-level pollution summaries
+#Note:Compare multiple pollution indicators together
+#Note: Selected variables needed for analysis (pm25_24HourMean.value and bcFossilFuel24HourMean.value)
+
+
+env_clean <- env_data %>%
+  select(
+    sensor_name,
+    latitude,
+    longitude,
+    startofperiod,
+    pm2_5ConcMass24HourMean.value,
+    bcFossilFuel24HourMean.value
+  ) %>%
+  
+#Note: Renamed variables for easier coding and readability
+#Note: Shorter names make plotting and analysis cleaner
+  
+  rename(
+    pm25 = pm2_5ConcMass24HourMean.value,
+    fossil_fuel_bc = bcFossilFuel24HourMean.value
+  )
+
+#Note: Converted date column into proper date-time format
+#Note: This prevents formatting problems later in the analysis
+
+env_clean$startofperiod <- mdy_hms(env_clean$startofperiod)
+
+#Note: Removed rows with missing pollution measurements
+#Note: Missing values can distort averages and weaken relationships
+
+env_clean <- env_clean %>%
+  drop_na(pm25, fossil_fuel_bc)
+
+#Note: Created long-term pollution averages by sensor location
+
+sensor_avg <- env_clean %>%
+  group_by(sensor_name, latitude, longitude) %>%
+  summarise(
+    avg_pm25 = mean(pm25, na.rm = TRUE),
+    avg_fossil_bc = mean(fossil_fuel_bc, na.rm = TRUE)
+  )
+
+#Note: Preview cleaned environmental dataset
+
+head(sensor_avg)
+```
+
+#***Why This Step Matters***
+
+PM2.5 and fossil fuel black carbon fluctuate daily due to weather conditions, traffic intensity, and seasonal changes. By averaging measurements across time, the analysis focuses on persistent exposure patterns instead of temporary fluctuations. Using two environmental indicators also strengthens the project because it helps determine whether multiple pollution variables support similar ecological conclusions.
+
+Air pollution fluctuates daily due to weather, traffic, and seasonal conditions. By averaging pollution levels across time, the analysis focuses on persistent neighborhood exposure patterns instead of short-term variability. This creates a more biologically meaningful comparison with long-term social indicators like poverty.
+
+
+```{r clean-data-biological }
+
+#Note:The Chicago Health Atlas data set contains tract-level demographic and health information. 
+#Note:This project focuses specifically on poverty because socioeconomic vulnerability often influences environmental exposure patterns.
+
+#Note: Removed the first row if it contains metadata instead of observations
+bio_clean <- bio_data[-1, ]
+
+#Note: Selected only variables needed for this analysis
+#Note: This keeps the workflow organized and easier to interpret
+
+bio_clean <- bio_clean %>%
+  select(
+    Name,
+    GEOID,
+    Latitude,
+    Longitude,
+    `POV_2020.2024`
+  )
+
+#Note: Renamed columns for easier coding and readability
+#Note: Simpler variable names make plotting and analysis cleaner
+
+bio_clean <- bio_clean %>%
+  rename(
+    poverty_rate = `POV_2020.2024`,
+    latitude = Latitude,
+    longitude = Longitude
+  )
+
+#Note: Converted poverty values into numeric format
+#Note: Public datasets often import numeric values as characters
+
+bio_clean$poverty_rate <- as.numeric(bio_clean$poverty_rate)
+
+#Note: Remove rows with missing poverty values
+#Note: Missing values could distort statistical relationships
+
+bio_clean <- bio_clean %>%
+  drop_na(poverty_rate)
+
+#Note: Preview cleaned biological dataset
+
+head(bio_clean)
+
+```
+
+#***Poverty was selected because it reflects more than income alone. In urban ecological studies, poverty is often connected to:***
+
+reduced access to healthcare,
+increased environmental exposure,
+proximity to major roadways or industrial zones,
+and higher long-term biological vulnerability.
+
+This makes poverty a strong candidate for investigating whether environmental burdens are distributed unevenly across the city of Chicago.
+
+
+
+```{r poverty_rate_map}
+
+#Note: Create an interactive Chicago poverty vulnerability map.
+#Note: This map establishes the spatial distribution of socioeconomic vulnerability
+#Note: across Chicago census tracts.
+
+#Note: Poverty was selected because it is frequently associated with:
+#Note: environmental exposure, reduced healthcare access,
+#Note: and increased long-term biological vulnerability.
+
+#Note: Create custom sunset color variables
+#Note: to maintain consistent project aesthetics.
+
+sun_yellow <- "#FFD166"
+sun_orange <- "#FFA600"
+sun_pink <- "#FF5E78"
+sun_red <- "#C21807"
+dark_gray <- "#3A3A3A"
+
+#Note: Convert coordinates into numeric values.
+
+bio_clean$latitude <- as.numeric(bio_clean$latitude)
+bio_clean$longitude <- as.numeric(bio_clean$longitude)
+
+#Note: Remove rows with missing coordinates or poverty values.
+
+poverty_map_df <- bio_clean %>%
+  filter(
+    !is.na(latitude),
+    !is.na(longitude),
+    !is.na(poverty_rate)
+  )
+
+#Note: Create interactive poverty map using Plotly Mapbox.
+#Note: Larger and darker markers indicate higher poverty vulnerability.
+
+plot_ly(
+  poverty_map_df,
+  
+  type = "scattermapbox",
+  
+  #Note: Geographic coordinates
+  lat = ~latitude,
+  lon = ~longitude,
+  
+  mode = "markers",
+  
+  #Note: Marker styling
+  marker = list(
+    
+    #Note: Marker size based on poverty rate
+    size = poverty_map_df$poverty_rate * 0.7,
+    
+    #Note: Marker color based on poverty rate
+    color = poverty_map_df$poverty_rate,
+    
+    #Note: Sunset themed color gradient
+    colorscale = list(
+      c(0, sun_yellow),
+      c(0.35, sun_orange),
+      c(0.7, sun_pink),
+      c(1, sun_red)
+    ),
+    
+    showscale = TRUE,
+    
+    #Note: Marker border styling
+    line = list(
+      color = dark_gray,
+      width = 1
+    )
+  ),
+  
+  #Note: Hover information
+  text = ~paste(
+    "<b>Census Tract:</b>", Name,
+    "<br><b>Poverty Rate:</b>", round(poverty_rate, 2)
+  ),
+  
+  hoverinfo = "text"
+  
+) %>%
+  
+  layout(
+    
+    title = "Interactive Chicago Poverty Vulnerability Map",
+    
+    #Note: Chicago-centered map
+    mapbox = list(
+      style = "carto-positron",
+      zoom = 9,
+      center = list(
+        lat = 41.85,
+        lon = -87.68
+      )
+    ),
+    
+    margin = list(l = 0, r = 0, b = 0, t = 50)
+  )
+
+```
+
+
+#***Analysis of Interactive Poverty Vulnerability Map***
+
+The poverty vulnerability map demonstrates that socioeconomic stress is not evenly distributed across Chicago neighborhoods. Several census tracts display larger and darker sunset-colored markers, indicating areas experiencing elevated poverty rates compared to surrounding communities. These spatial clustering patterns suggest that social vulnerability may concentrate within particular regions of the city rather than occurring randomly across census tracts. From an ecological perspective, this is important because poverty is often associated with reduced healthcare access, environmental exposure, and increased long-term biological stress. Overall, the visualization supports the project’s hypothesis that vulnerable populations may experience overlapping environmental and socioeconomic burdens throughout Chicago.
+
+
+```{r poverty_distribution_map}
+
+#Note: Create an interactive poverty distribution intensity map.
+#Note: This visualization focuses on identifying clusters
+#Note: of elevated poverty vulnerability throughout Chicago.
+
+#Note: The purpose of this plot is to determine whether
+#Note: socioeconomic burden appears concentrated geographically.
+
+#Note: Create grouped poverty categories.
+#Note: Grouping improves interpretation of neighborhood-level vulnerability.
+
+poverty_distribution_df <- poverty_map_df %>%
+  
+  mutate(
+    poverty_group = case_when(
+      poverty_rate < 10 ~ "Lower Vulnerability",
+      poverty_rate >= 10 & poverty_rate < 20 ~ "Moderate Vulnerability",
+      poverty_rate >= 20 ~ "Higher Vulnerability"
+    )
+  )
+
+#Note: Create interactive distribution map.
+
+plot_ly(
+  poverty_distribution_df,
+  
+  type = "scattermapbox",
+  
+  lat = ~latitude,
+  lon = ~longitude,
+  
+  mode = "markers",
+  
+  #Note: Marker styling by grouped poverty vulnerability
+  marker = list(
+    
+    size = 12,
+    
+    color = ~poverty_rate,
+    
+    colorscale = list(
+      c(0, sun_yellow),
+      c(0.35, sun_orange),
+      c(0.7, sun_pink),
+      c(1, sun_red)
+    ),
+    
+    opacity = 0.8,
+    
+    line = list(
+      color = dark_gray,
+      width = 1
+    ),
+    
+    showscale = TRUE
+  ),
+  
+  #Note: Hover information
+  text = ~paste(
+    "<b>Census Tract:</b>", Name,
+    "<br><b>Poverty Rate:</b>", round(poverty_rate, 2),
+    "<br><b>Vulnerability Group:</b>", poverty_group
+  ),
+  
+  hoverinfo = "text"
+  
+) %>%
+  
+  layout(
+    
+    title = "Chicago Poverty Vulnerability Distribution",
+    
+    mapbox = list(
+      style = "carto-positron",
+      zoom = 9,
+      center = list(
+        lat = 41.85,
+        lon = -87.68
+      )
+    ),
+    
+    margin = list(l = 0, r = 0, b = 0, t = 50)
+  )
+
+```
+
+
+#***Analysis of Interactive Poverty Distribution Map***
+
+The poverty distribution map highlights strong geographic clustering patterns across Chicago census tracts. Higher vulnerability neighborhoods appear concentrated within specific areas, while lower poverty regions remain more spatially separated throughout the city. The darker sunset-colored markers emphasize how socioeconomic burden may accumulate within particular communities instead of being evenly dispersed across urban space. These patterns are ecologically significant because concentrated poverty may increase vulnerability to environmental exposure, limited healthcare access, and long-term biological stressors. Overall, the visualization supports the project’s broader conclusion that social vulnerability patterns appear spatially structured and may overlap with environmental inequality throughout Chicago.
+
+
+
+
+
+#**Group Conclusion**
+#**Conclusion**
+
+This project investigated whether neighborhoods in Chicago with higher socioeconomic vulnerability also experience greater exposure to air pollution, specifically black carbon concentrations. By combining environmental sensor observations with Chicago Health Atlas indicators,the analysis explored whether environmental burden and poverty overlap in a way that reflects realistic urban ecological conditions rather than random statistical coincidence.
+
+Overall, the findings suggest that there is a meaningful relationship between poverty and air pollution exposure across Chicago census tracts. Neighborhoods with higher poverty rates frequently aligned with higher average black carbon concentrations, indicating that environmental stressors may disproportionately affect socially vulnerable communities.
+
+These findings support broader environmental justice research showing that low-income populations are often located closer to major traffic corridors, industrial infrastructure, and other combustion-related pollution sources.
+
+The relationship observed throughout the analysis also demonstrated ecological credibility. Black carbon pollution is strongly associated with traffic emissions and combustion activity, making it biologically and environmentally reasonable that communities with fewer economic resources may experience greater exposure. The consistency of these patterns across visualizations and spatial comparisons suggests that the relationship reflects broader structural urban inequalities rather than isolated statistical patterns.
+
+However, this analysis also has important limitations. One major
+limitation was the mismatch between the two datasets. The environmental sensor data represented long-term continuous observations collected over time, while the Chicago Health Atlas indicators were census tract snapshots collected during a different period. Because the datasets were not perfectly synchronized temporally, the analysis may not fully capture changes in neighborhood conditions over time.
+
+Another limitation involved differences in spatial scale and data
+coverage. Environmental sensors were not evenly distributed across all Chicago neighborhoods, meaning some census tracts may have been
+represented more accurately than others. In addition, averaging
+environmental measurements across census tracts may have reduced local variability and hidden smaller pollution hotspots within neighborhoods.
+
+As a group, we also encountered challenges involving data cleaning,
+standardization, and dataset integration. Combining two independent
+datasets required extensive preprocessing to ensure that variables could be compared responsibly. Differences in formatting, geographic boundaries, missing values, and measurement units introduced additional uncertainty into the analysis process. Because this project relied primarily on observational data, there were also limits to how strongly we could interpret causal relationships between poverty and pollution.
+
+Time constraints and limited data availability also affected the scope of the project. While this analysis focused specifically on black carbon and poverty rates, incorporating additional variables such as particulate matter, asthma prevalence, traffic density, heat exposure, or healthcare access could provide a more comprehensive understanding of environmental vulnerability in Chicago. Future research could also benefit from longitudinal analysis and stronger spatial modeling techniques.
+
+Despite these limitations, the project successfully demonstrated how environmental and biological datasets can be combined to investigate urban environmental inequality in a scientifically responsible way. The results support the conclusion that environmental burdens are not distributed equally across Chicago neighborhoods and that socioeconomic vulnerability may be associated with higher exposure to pollution. Most importantly, this project highlights the importance of combining environmental science, biology, and public health perspectives to better understand how ecological conditions and social inequality intersect in urban communities.
+
+
+
+
+
+
+
+
+
